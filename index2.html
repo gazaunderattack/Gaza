@@ -1,0 +1,413 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robotic Arm</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; direction: rtl; }
+        .container { display: table; max-width: 2500px; margin: auto; padding: 20px; background-color: white; border-radius: 2px; }
+        .container2 { display: table-cell; max-width: 1000px; padding: 20px; background-color: white; border-radius: 2px; }
+        h1 { text-align: center; color: #333; }
+        h2 { text-align: center; color: #555; }
+        label { display: block; margin: 7px 0 5px; font-weight: bold; }
+        input { width: 100%; padding: 8px; margin-bottom: 7px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background-color: #218838; }
+        #result { margin-top: 15px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; background-color: #f9f9f9; }
+        .error { color: red; font-weight: bold; }
+        .plot-container { margin-top: 20px; text-align: center; }
+        canvas { border: 1px solid #ccc; border-radius: 4px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background-color: #f4f4f4; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="container2">
+        <h1>Inverse Kinematics Calculation</h1>
+        <form id="ikForm">
+            <input type="checkbox" id="modeCheckbox"> استخدام الزوايا لحساب النقطة النهائية<br><br>
+            <div id="pointInputs">
+                <label for="startX">Start X (0-10):</label>
+                <input type="number" id="startX" step="0.1" min="0" max="10" required>
+                <label for="startY">Start Y (0-10):</label>
+                <input type="number" id="startY" step="0.1" min="0" max="10" required>
+                <label for="endX">End X (0-10):</label>
+                <input type="number" id="endX" step="0.1" min="0" max="10" required>
+                <label for="endY">End Y (0-10):</label>
+                <input type="number" id="endY" step="0.1" min="0" max="10" required>
+            </div>
+            <div id="angleInputs" style="display: none;">
+                <label for="theta1">θ₁ (°):</label>
+                <input type="number" id="theta1" step="0.1">
+                <label for="theta2">θ₂ (°):</label>
+                <input type="number" id="theta2" step="0.1">
+                <label for="theta3">θ₃ (°):</label>
+                <input type="number" id="theta3" step="0.1">
+            </div>
+            <label for="L1">link 1 Length:</label>
+            <input type="number" id="L1" step="0.1" min="0.1" required>
+            <label for="L2">link 2 Length:</label>
+            <input type="number" id="L2" step="0.1" min="0.1" required>
+            <label for="L3">link 3 Length:</label>
+            <input type="number" id="L3" step="0.1" min="0.1" required>
+            <button type="submit">calculate angles</button>
+        </form>
+        <div id="result"></div>
+        <div class="plot-container">
+            <h2>arm simulator</h2>
+            <canvas id="armCanvas" width="1000" height="750"></canvas>
+        </div>
+        <p> 
+            S1: The point at the end of link1<br>
+            S2: The point at the end of link2<br>
+            S3: The point at the end of link3<br>
+            small green dot: robot foundation (0,0)<br>
+            big green dot: start point<br>
+            violet dot: end point<br>
+            θ₁: angle between link1 & X_axes<br>
+            θ₂: angle between link1 & link2<br>
+            θ₃: angle between link2 & link3
+        </p>
+    </div>
+    <div class="container2">
+        <h2>data table</h2>
+        <table id="dataTable">
+            <thead>
+                <tr>
+                    <th>step</th>
+                    <th>θ₁ (°)</th>
+                    <th>θ₂ (°)</th>
+                    <th>θ₃ (°)</th>
+                    <th>s1 X</th>
+                    <th>s1 Y</th>
+                    <th>s2 X</th>
+                    <th>s2 Y</th>
+                    <th>s3 X</th>
+                    <th>s3 Y</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let dataRecords = [];
+    const checkbox = document.getElementById('modeCheckbox');
+    const angleInputs = document.getElementById('angleInputs');
+    const pointInputs = document.getElementById('pointInputs');
+
+    // تبديل رؤية الحقول بناءً على حالة الـ checkbox
+    checkbox.addEventListener('change', function() {
+        if (this.checked) {
+            angleInputs.style.display = 'block';
+            pointInputs.style.display = 'none';
+        } else {
+            angleInputs.style.display = 'none';
+            pointInputs.style.display = 'block';
+        }
+    });
+
+    document.getElementById('ikForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        dataRecords = []; // reset
+
+        const inputs = {
+            startX: parseFloat(document.getElementById('startX').value),
+            startY: parseFloat(document.getElementById('startY').value),
+            endX: parseFloat(document.getElementById('endX').value),
+            endY: parseFloat(document.getElementById('endY').value),
+            L1: parseFloat(document.getElementById('L1').value),
+            L2: parseFloat(document.getElementById('L2').value),
+            L3: parseFloat(document.getElementById('L3').value)
+        };
+
+        if ([inputs.L1, inputs.L2, inputs.L3].some(isNaN) || [inputs.L1, inputs.L2, inputs.L3].some(v => v <= 0)) {
+            showError('The lengths of the links must be positive and valid');
+            return;
+        }
+
+        if (checkbox.checked) {
+            // الطور الثاني: Forward Kinematics
+            const theta1 = parseFloat(document.getElementById('theta1').value);
+            const theta2 = parseFloat(document.getElementById('theta2').value);
+            const theta3 = parseFloat(document.getElementById('theta3').value);
+
+            if (isNaN(theta1) || isNaN(theta2) || isNaN(theta3)) {
+                showError('please enter valid angles');
+                return;
+            }
+
+            const theta1Rad = theta1 * Math.PI / 180;
+            const theta2Rad = theta2 * Math.PI / 180;
+            const theta3Rad = theta3 * Math.PI / 180;
+
+            const endPoint = calculateFK(theta1Rad, theta2Rad, theta3Rad, inputs.L1, inputs.L2, inputs.L3);
+            const points = drawArm(inputs, [theta1Rad, theta2Rad, theta3Rad]);
+            recordData(0, [theta1Rad, theta2Rad, theta3Rad], points);
+            fillDataTable();
+            showEndPoint(endPoint);
+        } else {
+            // الطور الأساسي: Inverse Kinematics
+            if (Object.values(inputs).some(isNaN)) {
+                showError('please enter a valid input');
+                return;
+            }
+            if ([inputs.startX, inputs.startY, inputs.endX, inputs.endY].some(v => v < 0 || v > 10)) {
+                showError('Coordinates must be between 0 and 10');
+                return;
+            }
+
+            const path = generatePath(inputs.startX, inputs.startY, inputs.endX, inputs.endY, 50);
+            const solutions = path.map(point => calculateIK(point.x, point.y, inputs.L1, inputs.L2, inputs.L3));
+            const reachableSolutions = solutions.filter(s => s !== null);
+
+            if (reachableSolutions.length === 0) {
+                showError('Target position is unreachable');
+                clearCanvas();
+                return;
+            }
+
+            animateArm(inputs, reachableSolutions, 0);
+        }
+    });
+
+    // دالة لحساب النقطة النهائية باستخدام Forward Kinematics
+    function calculateFK(theta1, theta2, theta3, L1, L2, L3) {
+        const x = L1 * Math.cos(theta1) + L2 * Math.cos(theta1 + theta2) + L3 * Math.cos(theta1 + theta2 + theta3);
+        const y = L1 * Math.sin(theta1) + L2 * Math.sin(theta1 + theta2) + L3 * Math.sin(theta1 + theta2 + theta3);
+        return { x, y };
+    }
+
+    function generatePath(startX, startY, endX, endY, steps) {
+        const path = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const x = startX + t * (endX - startX);
+            const y = startY + t * (endY - startY);
+            path.push({ x, y });
+        }
+        return path;
+    }
+
+    function calculateIK(x, y, L1, L2, L3) {
+        const distance = Math.sqrt(x * x + y * y);
+        const totalLength = L1 + L2 + L3;
+        if (distance > totalLength || distance < Math.abs(L1 - L2 - L3)) {
+            return null;
+        }
+
+        const d = Math.sqrt(x * x + y * y);
+        const cosPhi = (d * d + L3 * L3 - L2 * L2) / (2 * d * L3);
+        const phi = Math.acos(Math.max(-1, Math.min(1, cosPhi)));
+        const thetaTarget = Math.atan2(y, x);
+
+        const x2 = x - L3 * Math.cos(thetaTarget);
+        const y2 = y - L3 * Math.sin(thetaTarget);
+
+        const r = Math.sqrt(x2 * x2 + y2 * y2);
+        const cosTheta2 = (r * r - L1 * L1 - L2 * L2) / (2 * L1 * L2);
+        const theta2 = Math.acos(Math.max(-1, Math.min(1, cosTheta2)));
+        const alpha = Math.atan2(y2, x2);
+        const beta = Math.asin(L2 * Math.sin(theta2) / r);
+        const theta1 = alpha - beta;
+
+        const theta3 = thetaTarget - (theta1 + theta2);
+
+        return [theta1, theta2, theta3];
+    }
+
+    function animateArm(inputs, solutions, index) {
+        if (index >= solutions.length) {
+            fillDataTable();
+            return;
+        }
+
+        const solution = solutions[index];
+        const points = drawArm(inputs, solution);
+        recordData(index, solution, points);
+        showAngles(solution);
+
+        setTimeout(() => {
+            requestAnimationFrame(() => animateArm(inputs, solutions, index + 1));
+        }, 50);
+    }
+
+    function drawArm(inputs, solution) {
+        const canvas = document.getElementById('armCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const scale = 50;
+        const offsetX = 250;
+        const offsetY = 50;
+        const axisYBase = offsetY + 10 * scale;
+
+        // X&Y plan
+        ctx.strokeStyle = '#ddd';
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= 10; x++) {
+            ctx.beginPath();
+            ctx.moveTo(offsetX + x * scale, offsetY);
+            ctx.lineTo(offsetX + x * scale, axisYBase);
+            ctx.stroke();
+            ctx.fillStyle = '#000';
+            ctx.fillText(x.toString(), offsetX + x * scale - 5, axisYBase + 20);
+        }
+        for (let y = 0; y <= 10; y++) {
+            ctx.beginPath();
+            ctx.moveTo(offsetX, offsetY + y * scale);
+            ctx.lineTo(offsetX + 10 * scale, offsetY + y * scale);
+            ctx.stroke();
+            ctx.fillText((10 - y).toString(), offsetX - 30, offsetY + y * scale + 5);
+        }
+
+        // draw Axes
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(offsetX, axisYBase);
+        ctx.lineTo(offsetX + 10 * scale, axisYBase);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(offsetX, offsetY);
+        ctx.lineTo(offsetX, axisYBase);
+        ctx.stroke();
+
+        const baseX = offsetX;
+        const baseY = axisYBase;
+        const [theta1, theta2, theta3] = solution;
+
+        const x1 = baseX + inputs.L1 * scale * Math.cos(theta1);
+        const y1 = baseY - inputs.L1 * scale * Math.sin(theta1);
+        const x2 = x1 + inputs.L2 * scale * Math.cos(theta1 + theta2);
+        const y2 = y1 - inputs.L2 * scale * Math.sin(theta1 + theta2);
+        const x3 = x2 + inputs.L3 * scale * Math.cos(theta1 + theta2 + theta3);
+        const y3 = y2 - inputs.L3 * scale * Math.sin(theta1 + theta2 + theta3);
+
+        // draw links
+        ctx.beginPath();
+        ctx.moveTo(baseX, baseY);
+        ctx.lineTo(x1, y1);
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = 'green';
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x3, y3);
+        ctx.strokeStyle = 'red';
+        ctx.stroke();
+
+        // draw points
+        const joints = [
+            { x: baseX, y: baseY },
+            { x: x1, y: y1 },
+            { x: x2, y: y2 },
+            { x: x3, y: y3 }
+        ];
+        joints.forEach((joint, i) => {
+            ctx.fillStyle = i === 0 ? '#00FF00' : '#000';
+            ctx.beginPath();
+            ctx.arc(joint.x, joint.y, 5, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // start point(green) + end point (violet) - فقط في الطور الأساسي
+        if (!checkbox.checked) {
+            ctx.fillStyle = '#00FF00'; 
+            ctx.beginPath();
+            ctx.arc(offsetX + inputs.startX * scale, axisYBase - inputs.startY * scale, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#800080'; 
+            ctx.beginPath();
+            ctx.arc(offsetX + inputs.endX * scale, axisYBase - inputs.endY * scale, 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // s1, s2, s3 coordination points
+        return [
+            { x: (x1 - offsetX) / scale, y: (axisYBase - y1) / scale }, // s1
+            { x: (x2 - offsetX) / scale, y: (axisYBase - y2) / scale }, // s2
+            { x: (x3 - offsetX) / scale, y: (axisYBase - y3) / scale }  // s3
+        ];
+    }
+
+    function recordData(step, angles, points) {
+        const toDeg = rad => (rad * 180 / Math.PI).toFixed(2);
+        dataRecords.push({
+            step: step + 1,
+            theta1: toDeg(angles[0]),
+            theta2: toDeg(angles[1]),
+            theta3: toDeg(angles[2]),
+            s1X: points[0].x.toFixed(2),
+            s1Y: points[0].y.toFixed(2),
+            s2X: points[1].x.toFixed(2),
+            s2Y: points[1].y.toFixed(2),
+            s3X: points[2].x.toFixed(2),
+            s3Y: points[2].y.toFixed(2)
+        });
+    }
+
+    function fillDataTable() {
+        const tableBody = document.querySelector('#dataTable tbody');
+        tableBody.innerHTML = ''; // clear table
+
+        dataRecords.forEach(record => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${record.step}</td>
+                <td>${record.theta1}</td>
+                <td>${record.theta2}</td>
+                <td>${record.theta3}</td>
+                <td>${record.s1X}</td>
+                <td>${record.s1Y}</td>
+                <td>${record.s2X}</td>
+                <td>${record.s2Y}</td>
+                <td>${record.s3X}</td>
+                <td>${record.s3Y}</td>
+            `;
+            tableBody.appendChild(row);
+        });
+    }
+
+    function showAngles(solution) {
+        const toDeg = rad => (rad * 180 / Math.PI).toFixed(2);
+        document.getElementById('result').innerHTML = `
+            <h3>current angles:</h3>
+            <p>θ₁: ${toDeg(solution[0])}°</p>
+            <p>θ₂: ${toDeg(solution[1])}°</p>
+            <p>θ₃: ${toDeg(solution[2])}°</p>
+        `;
+    }
+
+    // دالة لعرض النقطة النهائية في الطور الثاني
+    function showEndPoint(point) {
+        document.getElementById('result').innerHTML = `
+            <h3>End Point Coordinates:</h3>
+            <p>X: ${point.x.toFixed(2)}</p>
+            <p>Y: ${point.y.toFixed(2)}</p>
+        `;
+    }
+
+    function showError(msg) {
+        document.getElementById('result').innerHTML = `<p class="error">error: ${msg}</p>`;
+    }
+
+    function clearCanvas() {
+        const canvas = document.getElementById('armCanvas');
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    }
+</script>
+</body>
+</html>
